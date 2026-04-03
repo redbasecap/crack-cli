@@ -1,151 +1,36 @@
-# Forge CLI — Rust Implementation
+# Forge CLI — Rust Workspace
 
-A high-performance Rust rewrite of the Forge CLI agent harness. Built for speed, safety, and native tool execution.
+The Rust implementation of Forge CLI. This is the high-performance core runtime.
 
-## Quick Start
+## Crates
+
+| Crate          | Description                                      |
+|---------------|--------------------------------------------------|
+| `forge-cli`    | Main binary — REPL, one-shot prompts, sessions  |
+| `runtime`      | Session management, tool orchestration, hooks    |
+| `api`          | LLM provider clients (Anthropic, OpenAI-compat) |
+| `tools`        | Tool definitions and execution engine            |
+| `plugins`      | Plugin system with pre/post hooks                |
+| `commands`     | Slash command registry and dispatch              |
+| `telemetry`    | Usage tracking and metrics                       |
+| `compat-harness` | Compatibility layer                           |
+
+## Build
 
 ```bash
-# Build
-cd rust/
 cargo build --release
+```
 
-# Run interactive REPL
+## Test
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+## Run
+
+```bash
 ./target/release/forge
-
-# One-shot prompt
-./target/release/forge prompt "explain this codebase"
-
-# With specific model
-./target/release/forge --model sonnet prompt "fix the bug in main.rs"
 ```
-
-## Configuration
-
-Set your API credentials:
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-# Or use a proxy
-export ANTHROPIC_BASE_URL="https://your-proxy.com"
-```
-
-Or authenticate via OAuth:
-
-```bash
-forge login
-```
-
-## Features
-
-| Feature | Status |
-|---------|--------|
-| Anthropic API + streaming | ✅ |
-| OAuth login/logout | ✅ |
-| Interactive REPL (rustyline) | ✅ |
-| Tool system (bash, read, write, edit, grep, glob) | ✅ |
-| Web tools (search, fetch) | ✅ |
-| Sub-agent orchestration | ✅ |
-| Todo tracking | ✅ |
-| Notebook editing | ✅ |
-| FORGE.md / project memory | ✅ |
-| Config file hierarchy (.forge.json) | ✅ |
-| Permission system | ✅ |
-| MCP server lifecycle | ✅ |
-| Session persistence + resume | ✅ |
-| Extended thinking (thinking blocks) | ✅ |
-| Cost tracking + usage display | ✅ |
-| Git integration | ✅ |
-| Markdown terminal rendering (ANSI) | ✅ |
-| Model aliases (opus/sonnet/haiku) | ✅ |
-| Slash commands (/status, /compact, /clear, etc.) | ✅ |
-| Hooks (PreToolUse/PostToolUse) | 🔧 Config only |
-| Plugin system | 📋 Planned |
-| Skills registry | 📋 Planned |
-
-## Model Aliases
-
-Short names resolve to the latest model versions:
-
-| Alias | Resolves To |
-|-------|------------|
-| `opus` | `claude-opus-4-6` |
-| `sonnet` | `claude-sonnet-4-6` |
-| `haiku` | `claude-haiku-4-5-20251213` |
-
-## CLI Flags
-
-```
-forge [OPTIONS] [COMMAND]
-
-Options:
-  --model MODEL                    Set the model (alias or full name)
-  --dangerously-skip-permissions   Skip all permission checks
-  --permission-mode MODE           Set read-only, workspace-write, or danger-full-access
-  --allowedTools TOOLS             Restrict enabled tools
-  --output-format FORMAT           Output format (text or json)
-  --version, -V                    Print version info
-
-Commands:
-  prompt <text>      One-shot prompt (non-interactive)
-  login              Authenticate via OAuth
-  logout             Clear stored credentials
-  init               Initialize project config
-  doctor             Check environment health
-  self-update        Update to latest version
-```
-
-## Slash Commands (REPL)
-
-Tab completion now expands not just slash command names, but also common workflow arguments like model aliases, permission modes, and recent session IDs.
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help |
-| `/status` | Show session status (model, tokens, cost) |
-| `/cost` | Show cost breakdown |
-| `/compact` | Compact conversation history |
-| `/clear` | Clear conversation |
-| `/model [name]` | Show or switch model |
-| `/permissions` | Show or switch permission mode |
-| `/config [section]` | Show config (env, hooks, model) |
-| `/memory` | Show FORGE.md contents |
-| `/diff` | Show git diff |
-| `/export [path]` | Export conversation |
-| `/session [id]` | Resume a previous session |
-| `/version` | Show version |
-
-## Workspace Layout
-
-```
-rust/
-├── Cargo.toml              # Workspace root
-├── Cargo.lock
-└── crates/
-    ├── api/                # Anthropic API client + SSE streaming
-    ├── commands/           # Shared slash-command registry
-    ├── compat-harness/     # TS manifest extraction harness
-    ├── runtime/            # Session, config, permissions, MCP, prompts
-    ├── forge-cli/          # Main CLI binary (`forge`)
-    └── tools/              # Built-in tool implementations
-```
-
-### Crate Responsibilities
-
-- **api** — HTTP client, SSE stream parser, request/response types, auth (API key + OAuth bearer)
-- **commands** — Slash command definitions and help text generation
-- **compat-harness** — Extracts tool/prompt manifests from upstream TS source
-- **runtime** — `ConversationRuntime` agentic loop, `ConfigLoader` hierarchy, `Session` persistence, permission policy, MCP client, system prompt assembly, usage tracking
-- **forge-cli** — REPL, one-shot prompt, streaming display, tool call rendering, CLI argument parsing
-- **tools** — Tool specs + execution: Bash, ReadFile, WriteFile, EditFile, GlobSearch, GrepSearch, WebSearch, WebFetch, Agent, TodoWrite, NotebookEdit, Skill, ToolSearch, REPL runtimes
-
-## Stats
-
-- **~20K lines** of Rust
-- **6 crates** in workspace
-- **Binary name:** `forge`
-- **Default model:** `claude-opus-4-6`
-- **Default permissions:** `danger-full-access`
-
-## License
-
-See repository root.

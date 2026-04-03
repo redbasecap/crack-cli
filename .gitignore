@@ -1,7 +1,18 @@
 __pycache__/
+*.pyc
 archive/
-.omx/
-.forge-agents/
-# Claude Code local artifacts
-.claude/settings.local.json
-.claude/sessions/
+jobs/
+run.log
+results.tsv
+.env
+
+# Rust
+rust/target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

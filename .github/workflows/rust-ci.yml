@@ -2,23 +2,19 @@ name: Rust CI
 
 on:
   push:
-    branches:
-      - main
-      - 'gaebal/**'
-      - 'omx-issue-*'
+    branches: [main]
     paths:
       - .github/workflows/rust-ci.yml
       - rust/**
   pull_request:
-    branches:
-      - main
+    branches: [main]
     paths:
       - .github/workflows/rust-ci.yml
       - rust/**
   workflow_dispatch:
 
 concurrency:
-  group: rust-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: rust-ci-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -29,28 +25,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: cargo fmt
+  check:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust -> target
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-  test-forge-cli:
-    name: cargo test -p forge-cli
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust -> target
-      - name: Run crate tests
-        run: cargo test -p forge-cli
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

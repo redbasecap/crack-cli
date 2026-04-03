@@ -1,30 +1,27 @@
-# Forge CLI
+# 🔥 Forge CLI
 
-<p align="center">
-  <strong>Self-improving agent harness CLI — forge better agents through iterative refinement</strong>
-</p>
+**Self-improving agent harness — forge better agents through iterative refinement.**
 
-<p align="center">
-  <img src="https://img.shields.io/badge/language-Rust-orange?logo=rust&style=flat-square" alt="Rust" />
-  <img src="https://img.shields.io/badge/language-Python-blue?logo=python&style=flat-square" alt="Python" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License" />
-</p>
+[![Rust](https://img.shields.io/badge/Rust-1.78+-orange?logo=rust&style=flat-square)](https://www.rust-lang.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&style=flat-square)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 ---
 
 ## What is Forge?
 
-Forge is an open-source agent harness CLI that combines a high-performance Rust runtime with a self-improving experimentation loop. It provides:
+Forge is an open-source CLI that combines a **high-performance Rust agent runtime** with a **self-improving experiment loop**. Instead of manually tuning your agent harness, Forge runs benchmarks, measures scores, and hill-climbs toward better performance — automatically.
 
-- **Fast, memory-safe runtime** — Rust-powered CLI for interactive and scripted agent sessions
-- **Multi-provider support** — works with Anthropic, OpenAI-compatible, and other LLM providers
-- **Self-improving loop** — automated benchmark, score, and hill-climbing engine that iteratively refines the harness
-- **Plugin system** — extensible hooks and bundled plugins for customizing agent behavior
-- **Tool ecosystem** — file operations, bash execution, web search, MCP integration, and more
+**Core ideas:**
+- 🦀 **Rust runtime** — fast, memory-safe agent execution with streaming, tool orchestration, and session management
+- 🔄 **Self-improving loop** — automated benchmark → score → keep/discard cycle that iteratively refines the harness
+- 📝 **Human-in-the-loop via Markdown** — steer the meta-agent through `program.md`, not code
+- 🧰 **Rich tool ecosystem** — file ops, bash, web search, MCP integration, plugins
+- 🐳 **Sandboxed execution** — tasks run in isolation, nothing can damage your host
 
 ## Quick Start
 
-### Build from source (Rust)
+### Build the Rust CLI
 
 ```bash
 cd rust
@@ -32,111 +29,170 @@ cargo build --release
 ./target/release/forge
 ```
 
-### Run in interactive mode
+### Interactive mode
 
 ```bash
-forge                          # Start REPL
-forge prompt "explain this"    # One-shot prompt
-forge --resume                 # Resume last session
+forge                           # Start REPL
+forge prompt "explain this"     # One-shot prompt
+forge --resume                  # Resume last session
 ```
 
-### Self-improving loop (Python)
+### Run the self-improving loop
 
 ```bash
-# Initialize example tasks
+# 1. Initialize with example tasks
 python3 -m src.main forge-init-tasks
 
-# Run the benchmark suite
+# 2. Run benchmarks once
 python3 -m src.main forge-bench
 
-# Start the self-improvement loop
+# 3. Start the improvement loop
 python3 -m src.main forge-improve
 
-# View scores and experiment history
+# 4. Check results
 python3 -m src.main forge-score
 python3 -m src.main forge-experiment-log
 ```
 
-## Self-Improving Loop
+## How Self-Improvement Works
 
-Forge includes an experimentation engine inspired by [autoagent](https://github.com/autoagent) that iteratively improves the harness through hill-climbing:
-
-1. **Read** — the meta-agent reads `program.md` for high-level directives
-2. **Benchmark** — runs all tasks in `tasks/` and scores results (0.0-1.0)
-3. **Diagnose** — analyzes failure patterns from failed tasks
-4. **Propose** — generates targeted modifications to the harness
-5. **Evaluate** — re-runs benchmarks; keeps improvements, discards regressions
-6. **Log** — records every experiment in `results.tsv` with git commit references
-
-Edit `program.md` to steer the loop toward your goals.
+```
+┌─────────────────────────────────────────────────┐
+│                 program.md                       │
+│           (human writes directives)              │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│              Meta-Agent                          │
+│  1. Read directives + past results               │
+│  2. Diagnose failures from last run              │
+│  3. Propose harness changes                      │
+│  4. Apply changes + git commit                   │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│            Benchmark Runner                      │
+│  - Discover tasks in tasks/                      │
+│  - Run each task in subprocess isolation         │
+│  - Collect scores (0.0 – 1.0)                   │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│             Hill Climber                         │
+│  - Score improved? → KEEP (commit stays)         │
+│  - Score same + simpler? → KEEP                  │
+│  - Otherwise → DISCARD (git revert)              │
+│  - Log to results.tsv                            │
+└─────────────────────────────────────────────────┘
+                     │
+                     └──── loop ────┐
+                                    ▼
+                              next iteration
+```
 
 ## Task Format
 
-Each task lives in `tasks/<task-name>/` with:
+Tasks live in `tasks/` and follow this structure:
 
 ```
-tasks/example-task/
-  task.toml           # name, description, timeout
-  instruction.md      # what the agent should do
-  tests/
-    test.sh           # verification script (exit 0 = pass)
+tasks/my-task/
+├── task.toml            # Config (timeout, metadata)
+├── instruction.md       # Prompt sent to the agent
+└── tests/
+    └── test.sh          # Verifier — writes score to stdout
 ```
 
-Example `task.toml`:
-
+**Example `task.toml`:**
 ```toml
-[task]
-name = "example-task"
-description = "Write a function that returns the nth Fibonacci number"
-timeout = 60
+name = "hello-world"
+timeout_seconds = 60
 ```
 
-## CLI Reference
-
-| Command | Description |
-|---------|-------------|
-| `forge` | Start interactive REPL |
-| `forge prompt "..."` | One-shot prompt execution |
-| `forge --resume` | Resume the last session |
-| `forge improve` | Start the self-improvement loop |
-| `forge bench` | Run benchmark suite once |
-| `forge score` | Show current benchmark scores |
-| `forge experiment-log` | Display experiment history |
-| `forge init-tasks` | Scaffold a `tasks/` directory with examples |
+**Example `test.sh`:**
+```bash
+#!/bin/bash
+if [ -f /task/output.txt ] && grep -q "Hello" /task/output.txt; then
+    echo "1.0"  # pass
+else
+    echo "0.0"  # fail
+fi
+```
 
 ## Architecture
 
 ```
-rust/                      # Rust workspace
-  crates/
-    forge-cli/             # CLI binary (forge)
-    runtime/               # Session, config, permissions, hooks
-    api/                   # LLM provider clients
-    tools/                 # Built-in tool implementations
-    commands/              # Slash commands
-    plugins/               # Plugin system
-    telemetry/             # Usage tracking
-    compat-harness/        # Compatibility layer
-
-src/                       # Python modules
-  self_improve/            # Self-improvement engine
-    engine.py              # ExperimentLoop (hill-climbing)
-    scorer.py              # TaskScorer + ScoreHistory
-    task_runner.py          # Task discovery and execution
-    meta_agent.py          # Diagnosis and proposal generation
-  main.py                  # CLI entrypoint
-
-tasks/                     # Benchmark tasks
-program.md                 # Meta-agent directives
-results.tsv                # Experiment log (auto-generated)
+forge/
+├── rust/                    # Rust workspace
+│   └── crates/
+│       ├── forge-cli/       # CLI binary (forge)
+│       ├── runtime/         # Session, tools, permissions, hooks
+│       ├── api/             # LLM provider clients (Anthropic, OpenAI-compat)
+│       ├── tools/           # Tool definitions + execution
+│       ├── plugins/         # Plugin system + hooks
+│       ├── commands/        # Slash commands
+│       └── telemetry/       # Usage tracking
+├── src/                     # Python harness layer
+│   ├── self_improve/        # Self-improvement engine
+│   │   ├── engine.py        # ExperimentLoop (hill-climbing)
+│   │   ├── scorer.py        # Score aggregation + keep/discard
+│   │   ├── task_runner.py   # Task discovery + execution
+│   │   └── meta_agent.py    # Failure diagnosis + proposals
+│   ├── main.py              # CLI entry point
+│   ├── runtime.py           # Routing + session bootstrap
+│   ├── tools.py             # Tool registry
+│   └── commands.py          # Command registry
+├── tasks/                   # Benchmark tasks
+├── program.md               # Meta-agent directives
+└── results.tsv              # Experiment log (auto-generated)
 ```
 
 ## Configuration
 
-- `.forge.json` — project-level configuration
-- `.forge/settings.json` — user settings
-- `.forge/settings.local.json` — machine-local overrides
+| Env Variable       | Description                    | Default          |
+|-------------------|--------------------------------|------------------|
+| `FORGE_MODEL`      | LLM model to use              | `claude-sonnet-4-20250514`  |
+| `FORGE_API_KEY`    | Provider API key              | —                |
+| `FORGE_MAX_TURNS`  | Max turns per task             | `30`             |
+| `FORGE_TASKS_DIR`  | Path to benchmark tasks        | `./tasks`        |
+
+Config files: `~/.forge/settings.json` or `.forge.json` in project root.
+
+## CLI Reference
+
+### Rust CLI (`forge`)
+
+| Command                     | Description                          |
+|----------------------------|--------------------------------------|
+| `forge`                     | Interactive REPL                    |
+| `forge prompt "..."`        | One-shot prompt                     |
+| `forge --resume`            | Resume last session                 |
+| `forge --model <model>`     | Use specific model                  |
+
+### Python CLI (`python3 -m src.main`)
+
+| Command                     | Description                          |
+|----------------------------|--------------------------------------|
+| `forge-improve`             | Start self-improvement loop          |
+| `forge-bench`               | Run benchmark suite once             |
+| `forge-score`               | Show current scores                  |
+| `forge-experiment-log`      | Show experiment history              |
+| `forge-init-tasks`          | Scaffold tasks/ with example         |
+| `summary`                   | Render workspace summary             |
+| `manifest`                  | Print workspace manifest             |
+| `route <prompt>`            | Route prompt to tools/commands       |
+| `bootstrap <prompt>`        | Build a runtime session              |
+
+## Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Make your changes
+4. Run tests: `cd rust && cargo test --workspace`
+5. Submit a PR
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
