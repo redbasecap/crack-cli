@@ -21,7 +21,7 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::{
     resolve_startup_auth_source, AnthropicClient, AuthSource, ContentBlockDelta, InputContentBlock,
@@ -57,11 +57,33 @@ fn max_tokens_for_model(model: &str) -> u32 {
         64_000
     }
 }
-const DEFAULT_DATE: &str = "2026-03-31";
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BUILD_TARGET: Option<&str> = option_env!("TARGET");
 const GIT_SHA: Option<&str> = option_env!("GIT_SHA");
+/// Optional build-time date injected via `BUILD_DATE` env var; absent → shown as "unknown".
+const BUILD_DATE: Option<&str> = option_env!("BUILD_DATE");
+
+/// Return today's date in `YYYY-MM-DD` format (UTC) using only the standard library.
+///
+/// Uses the civil-from-days algorithm so `chrono` is not required.
+fn current_date_utc() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let z = (secs / 86_400) as u32 + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
 const INTERNAL_PROGRESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 const PRIMARY_SESSION_EXTENSION: &str = "jsonl";
 const LEGACY_SESSION_EXTENSION: &str = "json";
@@ -136,6 +158,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             permission_mode,
         } => run_repl(model, allowed_tools, permission_mode)?,
         CliAction::Help => print_help(),
+        CliAction::ForgeImprove { max_iterations, parallel, no_sandbox } => {
+            run_forge_improve(max_iterations, parallel, no_sandbox)?;
+        }
+        CliAction::ForgeBench { parallel, no_sandbox } => {
+            run_forge_bench(parallel, no_sandbox)?;
+        }
+        CliAction::ForgeScore => run_forge_score()?,
+        CliAction::ForgeExperimentLog => run_forge_experiment_log()?,
+        CliAction::ForgeSandboxStatus => run_forge_sandbox_status(),
+        CliAction::ForgeInitTasks { force } => run_forge_init_tasks(force)?,
     }
     Ok(())
 }
@@ -181,6 +213,22 @@ enum CliAction {
     },
     // prompt-mode formatting is only supported for non-interactive runs
     Help,
+    // ---- Self-improvement commands ----
+    ForgeImprove {
+        max_iterations: Option<usize>,
+        parallel: usize,
+        no_sandbox: bool,
+    },
+    ForgeBench {
+        parallel: usize,
+        no_sandbox: bool,
+    },
+    ForgeScore,
+    ForgeExperimentLog,
+    ForgeSandboxStatus,
+    ForgeInitTasks {
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +394,15 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             args: join_optional_args(&rest[1..]),
         }),
         "system-prompt" => parse_system_prompt_args(&rest[1..]),
+        "forge-improve" => parse_forge_improve_args(&rest[1..]),
+        "forge-bench" => parse_forge_bench_args(&rest[1..]),
+        "forge-score" => Ok(CliAction::ForgeScore),
+        "forge-experiment-log" => Ok(CliAction::ForgeExperimentLog),
+        "forge-sandbox-status" => Ok(CliAction::ForgeSandboxStatus),
+        "forge-init-tasks" => {
+            let force = rest[1..].contains(&"--force".to_string());
+            Ok(CliAction::ForgeInitTasks { force })
+        }
         "login" => Ok(CliAction::Login),
         "logout" => Ok(CliAction::Logout),
         "init" => Ok(CliAction::Init),
@@ -406,6 +463,12 @@ fn bare_slash_command_guidance(command_name: &str) -> Option<String> {
             | "logout"
             | "init"
             | "prompt"
+            | "forge-improve"
+            | "forge-bench"
+            | "forge-score"
+            | "forge-experiment-log"
+            | "forge-sandbox-status"
+            | "forge-init-tasks"
     ) {
         return None;
     }
@@ -617,9 +680,60 @@ fn filter_tool_specs(
     tool_registry.definitions(allowed_tools)
 }
 
+fn parse_forge_improve_args(args: &[String]) -> Result<CliAction, String> {
+    let mut max_iterations: Option<usize> = None;
+    let mut parallel: usize = 10;
+    let mut no_sandbox = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--max-iterations" => {
+                i += 1;
+                max_iterations = Some(
+                    args.get(i)
+                        .and_then(|v| v.parse().ok())
+                        .ok_or_else(|| "--max-iterations requires a positive integer".to_string())?,
+                );
+            }
+            "--parallel" => {
+                i += 1;
+                parallel = args
+                    .get(i)
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| "--parallel requires a positive integer".to_string())?;
+            }
+            "--no-sandbox" => no_sandbox = true,
+            other => return Err(format!("unknown forge-improve flag: {other}")),
+        }
+        i += 1;
+    }
+    Ok(CliAction::ForgeImprove { max_iterations, parallel, no_sandbox })
+}
+
+fn parse_forge_bench_args(args: &[String]) -> Result<CliAction, String> {
+    let mut parallel: usize = 10;
+    let mut no_sandbox = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--parallel" => {
+                i += 1;
+                parallel = args
+                    .get(i)
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| "--parallel requires a positive integer".to_string())?;
+            }
+            "--no-sandbox" => no_sandbox = true,
+            other => return Err(format!("unknown forge-bench flag: {other}")),
+        }
+        i += 1;
+    }
+    Ok(CliAction::ForgeBench { parallel, no_sandbox })
+}
+
 fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
     let mut cwd = env::current_dir().map_err(|error| error.to_string())?;
-    let mut date = DEFAULT_DATE.to_string();
+    let mut date = current_date_utc();
     let mut index = 0;
 
     while index < args.len() {
@@ -2649,7 +2763,7 @@ fn status_context(
     let loader = ConfigLoader::default_for(&cwd);
     let discovered_config_files = loader.discover().len();
     let runtime_config = loader.load()?;
-    let project_context = ProjectContext::discover_with_git(&cwd, DEFAULT_DATE)?;
+    let project_context = ProjectContext::discover_with_git(&cwd, &current_date_utc())?;
     let (project_root, git_branch) =
         parse_git_status_metadata(project_context.git_status.as_deref());
     let git_summary = parse_git_workspace_summary(project_context.git_status.as_deref());
@@ -2896,7 +3010,7 @@ fn render_config_report(section: Option<&str>) -> Result<String, Box<dyn std::er
 
 fn render_memory_report() -> Result<String, Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
-    let project_context = ProjectContext::discover(&cwd, DEFAULT_DATE)?;
+    let project_context = ProjectContext::discover(&cwd, &current_date_utc())?;
     let mut lines = vec![format!(
         "Memory
   Working directory {}
@@ -3255,7 +3369,8 @@ fn render_version_report() -> String {
     let git_sha = GIT_SHA.unwrap_or("unknown");
     let target = BUILD_TARGET.unwrap_or("unknown");
     format!(
-        "Forge\n  Version          {VERSION}\n  Git SHA          {git_sha}\n  Target           {target}\n  Build date       {DEFAULT_DATE}"
+        "Forge\n  Version          {VERSION}\n  Git SHA          {git_sha}\n  Target           {target}\n  Build date       {}",
+        BUILD_DATE.unwrap_or("unknown")
     )
 }
 
@@ -3349,7 +3464,7 @@ fn resolve_export_path(
 fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     Ok(load_system_prompt(
         env::current_dir()?,
-        DEFAULT_DATE,
+        &current_date_utc(),
         env::consts::OS,
         "unknown",
     )?)
@@ -6725,4 +6840,182 @@ mod sandbox_report_tests {
 
         assert!(abort_signal.is_aborted());
     }
+}
+
+// ============================================================================
+// Self-improvement CLI handlers
+// ============================================================================
+
+use self_improve::engine::{ExperimentConfig, ExperimentLoop};
+use self_improve::sandbox::MicroVMSandbox;
+
+fn build_experiment_loop(
+    parallel: usize,
+    no_sandbox: bool,
+) -> Result<ExperimentLoop, Box<dyn std::error::Error>> {
+    let cfg = ExperimentConfig {
+        use_sandbox: !no_sandbox,
+        parallel,
+        ..ExperimentConfig::default()
+    };
+    Ok(ExperimentLoop::new(cfg)?)
+}
+
+fn run_forge_improve(
+    max_iterations: Option<usize>,
+    parallel: usize,
+    no_sandbox: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rt = tokio::runtime::Runtime::new()?;
+    let lp = build_experiment_loop(parallel, no_sandbox)?;
+    let mode = if !no_sandbox && MicroVMSandbox::new().vm_ready() {
+        "microvm"
+    } else {
+        "subprocess"
+    };
+    println!("Execution mode: {mode}  parallel={parallel}");
+
+    let results = rt.block_on(lp.run(max_iterations))?;
+    for r in &results {
+        let status = if r.kept { "KEPT" } else { "DISCARDED" };
+        println!(
+            "[{status}] iteration {}: avg_score={:.3}  passed={}/{}  commit={}",
+            r.iteration, r.avg_score, r.passed, r.total, r.commit
+        );
+        println!("         {}", r.description);
+    }
+    if results.is_empty() {
+        println!("No iterations executed.");
+    }
+    Ok(())
+}
+
+fn run_forge_bench(
+    parallel: usize,
+    no_sandbox: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let rt = tokio::runtime::Runtime::new()?;
+    let lp = build_experiment_loop(parallel, no_sandbox)?;
+    let mode = if !no_sandbox && MicroVMSandbox::new().vm_ready() {
+        "microvm"
+    } else {
+        "subprocess"
+    };
+    println!("Execution mode: {mode}  parallel={parallel}");
+
+    let results = rt.block_on(lp.run_benchmark())?;
+    for r in &results {
+        let status = if r.passed { "PASS" } else { "FAIL" };
+        println!(
+            "[{status}] {}  score={:.2}  duration={:.1}s",
+            r.name, r.score, r.duration_secs
+        );
+        if !r.passed {
+            let snippet: String = r.output.chars().take(200).collect();
+            println!("       {snippet}");
+        }
+    }
+    let total = results.len();
+    let passed = results.iter().filter(|r| r.passed).count();
+    println!("\n{passed}/{total} tasks passed");
+    Ok(())
+}
+
+fn run_forge_score() -> Result<(), Box<dyn std::error::Error>> {
+    let lp = build_experiment_loop(10, false)?;
+    println!("{}", lp.show_scores()?);
+    Ok(())
+}
+
+fn run_forge_experiment_log() -> Result<(), Box<dyn std::error::Error>> {
+    let cfg = ExperimentConfig::default();
+    let project_root = match &cfg.project_root {
+        Some(p) => p.clone(),
+        None => std::process::Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| std::path::PathBuf::from(s.trim()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+    };
+    let log_path = project_root.join(&cfg.results_file);
+    if log_path.exists() {
+        print!("{}", std::fs::read_to_string(&log_path)?);
+    } else {
+        println!("No experiment log found. Run forge-improve first.");
+    }
+    Ok(())
+}
+
+fn run_forge_sandbox_status() {
+    let sb = MicroVMSandbox::new();
+    println!("{}", sb.status().display());
+    if !sb.binary_available() {
+        println!("\nTo enable MicroVM isolation:");
+        println!(
+            "  1. Install: cargo install --git https://github.com/quantumnic/microvm microvm"
+        );
+        println!("  2. Place a RISC-V Linux kernel at ~/.forge/vm/Image");
+        println!("  3. Optionally add rootfs at ~/.forge/vm/rootfs.img");
+    } else if !sb.vm_ready() {
+        println!("\nmicrovm found but no kernel configured.");
+        println!("  Place a RISC-V Linux kernel at ~/.forge/vm/Image");
+        println!("  Or set FORGE_VM_KERNEL=/path/to/Image");
+    }
+}
+
+fn run_forge_init_tasks(force: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let project_root = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| std::path::PathBuf::from(s.trim()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    let task_dir = project_root.join("tasks").join("example-task");
+    if task_dir.exists() && !force {
+        eprintln!(
+            "Example task already exists at {}.  Use --force to overwrite.",
+            task_dir.display()
+        );
+        return Ok(());
+    }
+
+    let tests_dir = task_dir.join("tests");
+    std::fs::create_dir_all(&tests_dir)?;
+
+    std::fs::write(
+        task_dir.join("task.toml"),
+        "[task]\nname = \"example-task\"\n\
+         description = \"Write a function that returns the nth Fibonacci number\"\n\
+         timeout = 60\n",
+    )?;
+    std::fs::write(
+        task_dir.join("instruction.md"),
+        "# Task: Fibonacci Function\n\n\
+         Write a Python file `solution.py` that contains a function `fibonacci(n)` \
+         which returns the nth Fibonacci number (0-indexed).\n\n\
+         - fibonacci(0) = 0\n- fibonacci(1) = 1\n- fibonacci(10) = 55\n\n\
+         The function should handle n >= 0.\n",
+    )?;
+
+    let test_script = tests_dir.join("test.sh");
+    std::fs::write(
+        &test_script,
+        "#!/usr/bin/env bash\nset -e\ncd \"$(dirname \"$0\")/..\"\n\
+         python3 -c \"\nfrom solution import fibonacci\n\
+         assert fibonacci(0) == 0\nassert fibonacci(1) == 1\n\
+         assert fibonacci(10) == 55\nassert fibonacci(20) == 6765\n\
+         print('All tests passed!')\n\"\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&test_script, std::fs::Permissions::from_mode(0o755))?;
+    }
+
+    println!("Scaffolded example task at {}", task_dir.display());
+    Ok(())
 }

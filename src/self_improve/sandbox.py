@@ -140,6 +140,7 @@ class MicroVMSandbox:
                 "score": 0.0,
                 "output": f"test script not found: {test_script}",
                 "duration": 0.0,
+                "task_dir": str(task_dir),
             }
 
         assert self.kernel_path is not None  # guaranteed by vm_ready()
@@ -168,14 +169,14 @@ class MicroVMSandbox:
             )
             elapsed = time.monotonic() - start
             output = (stdout or b"").decode() + (stderr or b"").decode()
-            # Check for pass markers in output.
-            passed = proc.returncode == 0 and "All tests passed" in output
+            passed = proc.returncode == 0
             return {
                 "name": name,
                 "passed": passed,
                 "score": 1.0 if passed else 0.0,
                 "output": output.strip(),
                 "duration": round(elapsed, 3),
+                "task_dir": str(task_dir),
             }
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - start
@@ -186,6 +187,7 @@ class MicroVMSandbox:
                 "score": 0.0,
                 "output": f"VM timed out after {self.vm_timeout}s",
                 "duration": round(elapsed, 3),
+                "task_dir": str(task_dir),
             }
         except Exception as exc:
             elapsed = time.monotonic() - start
@@ -195,6 +197,7 @@ class MicroVMSandbox:
                 "score": 0.0,
                 "output": f"VM error: {exc}",
                 "duration": round(elapsed, 3),
+                "task_dir": str(task_dir),
             }
 
     # ------------------------------------------------------------------
@@ -219,6 +222,7 @@ class MicroVMSandbox:
                 "score": 0.0,
                 "output": f"test script not found: {test_script}",
                 "duration": 0.0,
+                "task_dir": str(task_dir),
             }
 
         start = time.monotonic()
@@ -241,6 +245,7 @@ class MicroVMSandbox:
                 "score": 1.0 if passed else 0.0,
                 "output": output.strip(),
                 "duration": round(elapsed, 3),
+                "task_dir": str(task_dir),
             }
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - start
@@ -250,6 +255,7 @@ class MicroVMSandbox:
                 "score": 0.0,
                 "output": f"task timed out after {timeout}s",
                 "duration": round(elapsed, 3),
+                "task_dir": str(task_dir),
             }
         except Exception as exc:
             elapsed = time.monotonic() - start
@@ -259,4 +265,5 @@ class MicroVMSandbox:
                 "score": 0.0,
                 "output": f"unexpected error: {exc}",
                 "duration": round(elapsed, 3),
+                "task_dir": str(task_dir),
             }

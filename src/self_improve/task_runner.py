@@ -127,6 +127,7 @@ class TaskRunner:
                 "score": 0.0,
                 "output": f"test script not found: {test_script}",
                 "duration": 0.0,
+                "task_dir": str(task_dir),
             }
 
         start = time.monotonic()
@@ -159,6 +160,7 @@ class TaskRunner:
             "score": score,
             "output": output.strip(),
             "duration": round(elapsed, 3),
+            "task_dir": str(task_dir),
         }
 
     async def run_task_async(self, task: dict) -> dict:
@@ -174,6 +176,7 @@ class TaskRunner:
                 "score": 0.0,
                 "output": f"test script not found: {test_script}",
                 "duration": 0.0,
+                "task_dir": str(task_dir),
             }
 
         start = time.monotonic()
@@ -208,6 +211,7 @@ class TaskRunner:
             "score": score,
             "output": output.strip() if isinstance(output, str) else output,
             "duration": round(elapsed, 3),
+            "task_dir": str(task_dir),
         }
 
     async def run_tasks_async(self, tasks: list[dict]) -> list[dict]:

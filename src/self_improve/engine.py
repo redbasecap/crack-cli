@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -12,6 +13,7 @@ from .scorer import TaskScorer, ScoreHistory
 from .task_runner import TaskRunner
 from .meta_agent import MetaAgent
 from .sandbox import MicroVMSandbox
+from .types import TaskDescriptor, TaskResult
 
 
 def _find_project_root() -> Path:
@@ -54,6 +56,28 @@ def _git_revert_last() -> None:
         check=True,
         capture_output=True,
     )
+
+
+def _run_async(coro: object) -> object:
+    """Run *coro* safely regardless of whether an event loop is already running.
+
+    ``asyncio.run()`` raises ``RuntimeError`` when called from inside a running
+    loop (e.g. in a Jupyter notebook or an async test framework).  This helper
+    detects that case and runs the coroutine in a fresh thread instead, which
+    has its own event loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        # We are already inside an event loop — delegate to a worker thread.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+
+    return asyncio.run(coro)  # type: ignore[arg-type]
 
 
 @dataclass
@@ -127,23 +151,23 @@ class ExperimentLoop:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _run_all_tasks(self, tasks: list[dict]) -> list[dict]:
+    def _run_all_tasks(self, tasks: list[TaskDescriptor]) -> list[TaskResult]:
         """Run *tasks* using sandbox (parallel) or sequential subprocess."""
         if self._sandbox is not None:
-            return asyncio.run(
+            return _run_async(  # type: ignore[return-value]
                 self._sandbox.run_tasks_parallel(tasks, runner=self._runner)
             )
-        return [self._runner.run_task(t) for t in tasks]
+        return [self._runner.run_task(t) for t in tasks]  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def run_benchmark(self) -> list[dict]:
+    def run_benchmark(self) -> list[TaskResult]:
         """Run all benchmark tasks once and return the raw results."""
         self._setup()
         tasks = self._runner.discover_tasks()
-        return self._run_all_tasks(tasks)
+        return self._run_all_tasks(tasks)  # type: ignore[arg-type]
 
     def show_scores(self) -> str:
         """Return a human-readable summary of the current score history."""
@@ -181,7 +205,8 @@ class ExperimentLoop:
             iteration += 1
 
             # --- baseline ---
-            baseline_results = self._run_all_tasks(self._runner.discover_tasks())
+            tasks = self._runner.discover_tasks()
+            baseline_results = self._run_all_tasks(tasks)  # type: ignore[arg-type]
             baseline_score = self._scorer.aggregate(baseline_results)
             baseline_passed = sum(1 for r in baseline_results if r["passed"])
             baseline_total = len(baseline_results)
@@ -198,7 +223,7 @@ class ExperimentLoop:
 
             # --- diagnose + propose ---
             diagnosis = self._meta.diagnose(baseline_results)
-            proposals = self._meta.propose_changes(diagnosis)
+            proposals = self._meta.propose_changes(diagnosis, results=baseline_results)
 
             if not proposals:
                 results.append(
@@ -218,7 +243,7 @@ class ExperimentLoop:
             self._meta.apply_changes(proposals)
             experiment_commit = _git_commit(f"experiment: iteration {iteration}")
 
-            experiment_results = self._run_all_tasks(self._runner.discover_tasks())
+            experiment_results = self._run_all_tasks(tasks)  # type: ignore[arg-type]
             experiment_score = self._scorer.aggregate(experiment_results)
             experiment_passed = sum(1 for r in experiment_results if r["passed"])
             experiment_total = len(experiment_results)
@@ -228,7 +253,9 @@ class ExperimentLoop:
 
             if keep:
                 status = "kept"
-                description = f"iteration {iteration}: score {baseline_score:.3f} -> {experiment_score:.3f}"
+                description = (
+                    f"iteration {iteration}: score {baseline_score:.3f} -> {experiment_score:.3f}"
+                )
                 self._history.append(
                     commit=experiment_commit,
                     avg_score=experiment_score,
@@ -240,7 +267,8 @@ class ExperimentLoop:
             else:
                 status = "discarded"
                 description = (
-                    f"iteration {iteration}: score {baseline_score:.3f} -> {experiment_score:.3f} (reverted)"
+                    f"iteration {iteration}: score {baseline_score:.3f} -> "
+                    f"{experiment_score:.3f} (reverted)"
                 )
                 _git_revert_last()
                 self._history.append(

@@ -18,10 +18,12 @@ pulldown-cmark = "0.13"
 rustyline = "15"
 runtime = { path = "../runtime" }
 plugins = { path = "../plugins" }
+self-improve = { path = "../self-improve" }
 serde_json.workspace = true
 syntect = "5"
 tokio = { version = "1", features = ["rt-multi-thread", "signal", "time"] }
 tools = { path = "../tools" }
+which = "6"
 
 [lints]
 workspace = true
